@@ -29,6 +29,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const int _gameGateMinDailyStudyMinutes = 120;
   final AuthService _authService = AuthService();
   String? _userId;
   String? _displayName;
@@ -592,6 +593,33 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _navigateToGameTimerPage(BuildContext context) {
+    // 1. Avviso Soglia Studio Non Raggiunta
+    final studyMinutesToday = _totalPomodoroTimeToday.value.inMinutes;
+    if (studyMinutesToday < _gameGateMinDailyStudyMinutes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Warning: You haven\'t met the daily study goal of $_gameGateMinDailyStudyMinutes minutes. Playing now will accumulate malus time.'),
+          backgroundColor: Colors.blue[700],
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+
+    // 2. Avviso Malus Esistente
+    // Questo snackbar potrebbe sovrascrivere il precedente se entrambe le condizioni sono vere.
+    if (_currentMalusPlaytimeMinutes.value > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Warning: You have ${_currentMalusPlaytimeMinutes.value} minutes of malus. Playing more will increase it.'),
+          backgroundColor: Colors.orange[700],
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+
+    // Si procede sempre con la navigazione
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -604,18 +632,14 @@ class _HomePageState extends State<HomePage> {
             if (_pomodoroRunningNotifier.value) {
               final confirmed = await _showConfirmationDialog(
                   context, "Pomodoro Timer", "Game Timer");
-              if (!mounted) return;
-              if (confirmed == true) {
-                _stopPomodoro();
-                _actuallyStartGameTimer();
-              }
-            } else {
-              _actuallyStartGameTimer();
+              if (!mounted || confirmed != true) return; // Modificato per controllare confirmed != true
+              _stopPomodoro();
             }
+            _actuallyStartGameTimer();
           },
           onPause: _pauseGameTimer,
           onResume: _resumeGameTimer,
-          onStop: _stopGameTimer,
+          onStop: _stopGameTimer, // Calcolo malus nella Fase 3
         ),
       ),
     );
