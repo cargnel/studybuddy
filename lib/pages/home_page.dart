@@ -66,6 +66,9 @@ class _HomePageState extends State<HomePage> {
       ValueNotifier(Duration.zero);
   final ValueNotifier<Duration> _totalGameTimeToday =
       ValueNotifier(Duration.zero);
+  // Phase 3: Variables to store state at game start for malus calculation
+  int _studyTimeAtGameStartMinutes = 0; // <-- AGGIUNGI QUESTA
+  int _malusAtGameStartMinutes = 0;     // <-- AGGIUNGI QUESTA
 
   @override
   void initState() {
@@ -222,7 +225,23 @@ class _HomePageState extends State<HomePage> {
       }
     }
   }
+  Future<void> _updateUserMalusInFirestore() async {
+    if (_userId == null) return;
 
+    try {
+      final userDocRef =
+      FirebaseFirestore.instance.collection('users').doc(_userId!);
+      await userDocRef.set(
+        {'currentMalusPlaytimeMinutes': _currentMalusPlaytimeMinutes.value},
+        SetOptions(merge: true),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error updating malus in Firestore: ${e.toString()}')));
+      }
+    }
+  }
   Future<void> _loadInitialTimerStates() async {
     if (_userId == null) return;
 
@@ -468,13 +487,22 @@ class _HomePageState extends State<HomePage> {
     if (!fromLoad) {
       _gameTimeElapsedNotifier.value = Duration.zero;
       _gameSessionStartTime = DateTime.now();
+
+      // --- INIZIO MODIFICHE FASE 3 ---
+      // Salva lo stato attuale di studio e malus all'avvio del gioco
+      _studyTimeAtGameStartMinutes = _totalPomodoroTimeToday.value.inMinutes;
+      _malusAtGameStartMinutes = _currentMalusPlaytimeMinutes.value;
+      // --- FINE MODIFICHE FASE 3 ---
     }
 
     _gameDartTimer =
         Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       _tickGame();
     });
-    _saveCurrentTimerStates();
+    _saveCurrentTimerStates();// Salva lo stato del timer, inclusi isRunning, sessionStartTime, ecc.
+    // Non salva _studyTimeAtGameStartMinutes o _malusAtGameStartMinutes
+    // perché quelli sono stati di "inizio sessione", non lo stato continuo del timer.
+
   }
 
   void _tickGame() {
@@ -508,21 +536,63 @@ class _HomePageState extends State<HomePage> {
 
   void _stopGameTimer() {
     _gameDartTimer?.cancel();
+
     if (_gameSessionStartTime != null && _gameRunningNotifier.value) {
       Duration durationToLog = _gameTimeElapsedNotifier.value;
       if (durationToLog.inSeconds > 0) {
         _logSession(
-          timerType: 'game',
-          startTime: _gameSessionStartTime!,
-          duration: durationToLog,
-        );
+            timerType: 'game',
+            startTime: _gameSessionStartTime!,
+            duration: durationToLog);
+
+        // --- INIZIO LOGICA CALCOLO MALUS (FASE 3) ---
+        bool shouldAccumulateMalus = false;
+
+        // Condizione 1: Si è partiti con un malus esistente
+        if (_malusAtGameStartMinutes > 0) {
+          shouldAccumulateMalus = true;
+        }
+        // Condizione 2: Non si è raggiunta la soglia di studio giornaliera PRIMA di iniziare a giocare
+        else if (_studyTimeAtGameStartMinutes < _gameGateMinDailyStudyMinutes) {
+          shouldAccumulateMalus = true;
+        }
+
+        if (shouldAccumulateMalus) {
+          // Il malus viene calcolato in base ai minuti interi di gioco.
+          // Arrotondiamo per eccesso se ci sono secondi parziali,
+          // oppure usiamo i minuti interi. Per semplicità qui usiamo i minuti interi,
+          // ma potresti voler cambiare in (durationToLog.inSeconds / 60).ceil()
+          // se vuoi essere più "punitivo" per i secondi parziali.
+          int gameMinutesPlayed = durationToLog.inMinutes;
+
+          if (gameMinutesPlayed > 0) {
+            int malusGenerated = gameMinutesPlayed * _gameBonusRatioStudy.value;
+            _currentMalusPlaytimeMinutes.value += malusGenerated;
+
+            // Aggiorna il malus in Firestore
+            _updateUserMalusInFirestore();
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Malus time increased by $malusGenerated minutes.'),
+                  backgroundColor: Colors.red[700],
+                ),
+              );
+            }
+          }
+        }
+        // --- FINE LOGICA CALCOLO MALUS (FASE 3) ---
       }
     }
+
     _gameRunningNotifier.value = false;
     _gamePausedNotifier.value = false;
     _gameTimeElapsedNotifier.value = Duration.zero;
-    _gameSessionStartTime = null;
-    _saveCurrentTimerStates();
+    _gameSessionStartTime = null; // Resetta l'ora di inizio della sessione di gioco
+    _studyTimeAtGameStartMinutes = 0; // Resetta lo stato di inizio gioco
+    _malusAtGameStartMinutes = 0;   // Resetta lo stato di inizio gioco
+    _saveCurrentTimerStates(); // Salva lo stato del timer (che ora è fermo)
   }
 
   Future<bool?> _showConfirmationDialog(

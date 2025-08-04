@@ -1,0 +1,4 @@
+- i documenti su db devono avere id aaaaMMddThhmmss_tipodoc
+- bonus attività premianti:
+-- tabellina (ordine alfabetico) per scegliere le attività premianti (mostra nome, minuti, "ok").
+    Se non c'è, posso aggiungerla in una riga nuova e verrà registrata su DB e proposta la prossima volta
