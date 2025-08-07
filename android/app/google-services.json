@@ -12,7 +12,28 @@
           "package_name": "com.missich.studybuddy"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "448091609524-058qapr70lrprfrli31eohcbr6ao4i8f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.missich.studybuddy",
+            "certificate_hash": "ea0a48d6b7a427025d0a7591abbeb7d6fb1450d4"
+          }
+        },
+        {
+          "client_id": "448091609524-h7h7nbp34gor4j0frpvljd4ld79bk93c.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.missich.studybuddy",
+            "certificate_hash": "5314f7c6fda8541d2cffec1a4ff9e338005bb05b"
+          }
+        },
+        {
+          "client_id": "448091609524-cm7snv8ucg1sjbpvdibgggfk6gdilujt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAul2yI0UMLHcbHOTe9wxIRl7HCdOxBc_c"
@@ -20,7 +41,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "448091609524-cm7snv8ucg1sjbpvdibgggfk6gdilujt.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
