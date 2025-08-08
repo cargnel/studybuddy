@@ -46,18 +46,44 @@ class TimerService {
   }
 
   // Adds a new session log
-  static Future<void> addSessionLog({
-    required Map<String, dynamic> sessionData,
-  }) async {
-    if (_userId == null) return; // User not logged in
-    // Ensure sessionData map is not null and add loggedAt timestamp
-    final Map<String, dynamic> dataToLog = Map.from(sessionData);
-    dataToLog['loggedAt'] = FieldValue.serverTimestamp();
-    
-    await _firestore
-        .collection('users')
-        .doc(_userId)
-        .collection('sessions') // New collection for session logs
-        .add(dataToLog);
+  static Future<void> addSessionLog(
+      {required Map<String, dynamic> sessionData}) async {
+    final firestore = FirebaseFirestore.instance;
+    final userId = sessionData['userId'] as String?;
+    final timerType = sessionData['timerType'] as String?;
+    final startTimeStamp = sessionData['startTime'] as Timestamp?;
+
+    // Recupera il prefisso del nome da sessionData
+    //final namePrefix = sessionData['namePrefixForDocId'] as String? ?? "unknown_user"; // <--- NUOVA RIGA
+
+    if (userId == null || timerType == null || startTimeStamp == null) {
+        print('TimerService.addSessionLog: Dati mancanti per generare ID personalizzato.');
+      return;
+    }
+
+    final DateTime startTimeDt = startTimeStamp.toDate();
+
+    String year = startTimeDt.year.toString().padLeft(4, '0');
+    String month = startTimeDt.month.toString().padLeft(2, '0');
+    String day = startTimeDt.day.toString().padLeft(2, '0');
+    String hour = startTimeDt.hour.toString().padLeft(2, '0');
+    String minute = startTimeDt.minute.toString().padLeft(2, '0');
+    String second = startTimeDt.second.toString().padLeft(2, '0');
+
+    String formattedTimestamp = "$year$month${day}T$hour$minute$second";
+
+    String customDocumentId = "${formattedTimestamp}_$timerType";
+
+    try {
+      await firestore
+          .collection('users')
+          .doc(userId)
+          .collection('sessions')
+          .doc(customDocumentId)
+          .set(sessionData);
+    } catch (e) {
+      print('Errore durante il salvataggio della sessione con ID personalizzato ($customDocumentId): $e');
+      rethrow;
+    }
   }
 }

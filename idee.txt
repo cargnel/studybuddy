@@ -1,4 +1,11 @@
-- i documenti su db devono avere id aaaaMMddThhmmss_tipodoc
+FATTO- i documenti su db devono avere id aaaaMMddThhmmss_tipodoc
 - bonus attività premianti:
 -- tabellina (ordine alfabetico) per scegliere le attività premianti (mostra nome, minuti, "ok").
     Se non c'è, posso aggiungerla in una riga nuova e verrà registrata su DB e proposta la prossima volta
+- _workSessionsBeforeLongBreak va messe in settings
+FATTO - ora i pomodori hanno stop che avvia subito la sessione successiva di pausa/lavoro...ma non si capisce dai log come li conta
+- popup su schermo spento
+- suoni di notifica
+- identificare supervisore / studente. in qualche modo vanno legati così che il supervisore possa vedere le sessioni dei suoi studenti. Uno studente può avere più supervisori
+- lo studente può aggiungere il suo supervisore con email google.
+- se non ho completato la sessione di lavoro e faccio STOP, mi propone di ripartire con sessione di lavoro completa. forse è corretto. Ma se faccio stop a una sessione di PAUSA che succede?

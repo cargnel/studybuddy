@@ -1,13 +1,25 @@
+
+
 // MARKER: THIS FILE SHOULD BE UPDATED BY THE ASSISTANT - V4
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 // import 'package:shared_preferences/shared_preferences.dart'; // No longer used for settings
 import '../services/auth_service.dart';
 import '../services/timer_service.dart';
 import 'settings_page.dart';
 import 'login_page.dart';
+
+// Add this top-level function, typically after imports or before your _HomePageState class
+void _appOnDidReceiveLocalNotificationForIOS(
+    int id, String? title, String? body, String? payload) {
+  // This is the callback for iOS < 10 when a notification is received while the app is in the foreground.
+  // You can add logic here if needed, e.g., show a dialog or update app state.
+  // For now, it can be empty or have a debug print.
+  // debugPrint('iOS foreground notification ($id): $title - $body');
+}
 
 // Utility function to format duration
 String formatDuration(Duration duration, {bool showHours = false}) {
@@ -19,6 +31,12 @@ String formatDuration(Duration duration, {bool showHours = false}) {
   } else {
     return "$twoDigitMinutes:$twoDigitSeconds";
   }
+}
+
+enum PomodoroMode {
+  work,
+  shortBreak,
+  longBreak,
 }
 
 class HomePage extends StatefulWidget {
@@ -40,18 +58,28 @@ class _HomePageState extends State<HomePage> {
   final ValueNotifier<bool> _pomodoroRunningNotifier = ValueNotifier(false);
   final ValueNotifier<bool> _pomodoroPausedNotifier = ValueNotifier(false);
   final ValueNotifier<int> _pomodoroSessionSeconds =
-      ValueNotifier(25 * 60); 
+      ValueNotifier(25 * 60);
 
   // New setting notifiers for Phase 1
+  final ValueNotifier<int> _pomodoroWorkDurationMinutes = // <--- AGGIUNGI QUESTA
+      ValueNotifier(25); // Valore predefinito: 25 minuti
   final ValueNotifier<int> _pomodoroShortBreakDurationMinutes =
-      ValueNotifier(5); 
+      ValueNotifier(5); // Dovrebbe già esserci
+  final ValueNotifier<int> _pomodoroLongBreakDurationMinutes = // <--- AGGIUNGI QUESTA
+      ValueNotifier(15); // Valore predefinito: 15 minuti
   final ValueNotifier<int> _gameBonusRatioStudy =
-      ValueNotifier(2); 
+      ValueNotifier(2);
   final ValueNotifier<int> _currentMalusPlaytimeMinutes =
-      ValueNotifier(0); 
+      ValueNotifier(0);
 
   DateTime? _pomodoroSessionStartTime;
   Timer? _pomodoroDartTimer;
+
+  // Variabili per il ciclo Pomodoro (esistenti)
+  PomodoroMode _pomodoroCurrentMode = PomodoroMode.work; 
+  final ValueNotifier<PomodoroMode> _pomodoroCurrentModeNotifier = ValueNotifier(PomodoroMode.work); // Per la UI
+  int _completedWorkSessions = 0;
+  final int _workSessionsBeforeLongBreak = 3; // Mantieni o rendi configurabile in settings
 
   // Game Timer State
   final ValueNotifier<Duration> _gameTimeElapsedNotifier =
@@ -70,10 +98,44 @@ class _HomePageState extends State<HomePage> {
   int _studyTimeAtGameStartMinutes = 0; // <-- AGGIUNGI QUESTA
   int _malusAtGameStartMinutes = 0;     // <-- AGGIUNGI QUESTA
 
+  Map<String, String> _parseDisplayName(String? displayName) {
+    if (displayName == null || displayName.trim().isEmpty) {
+      return {'nome': "", 'cognome': ""};
+    }
+
+    final String trimmedName = displayName.trim();
+    // Rimuove eventuali spazi multipli interni
+    final List<String> parts = trimmedName.split(' ').where((p) => p.isNotEmpty).toList();
+
+    if (parts.isEmpty) {
+      return {'nome': "", 'cognome': ""};
+    }
+
+    String nome = parts.first;
+    String cognome = "";
+
+    if (parts.length > 1) {
+      cognome = parts.last; // Assume l'ultima parte come cognome
+    }
+
+    if (nome == cognome && parts.length == 1) {
+      cognome = "";
+    }
+
+    return {'nome': nome, 'cognome': cognome};
+  }
+
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+  // Aggiungi un set per tenere traccia delle soglie notificate per la sessione di lavoro corrente
+  Set<int> _notifiedWorkSessionThresholds = {};
   @override
   void initState() {
     super.initState();
+    _initializeNotifications(); // Chiama l'inizializzazione delle notifiche
     _checkCurrentUserAndLoadData();
+    // L'impostazione iniziale di _pomodoroTimeNotifier e _pomodoroSessionSeconds
+    // è ora gestita meglio da _loadUserSettings o _loadInitialTimerStates.
   }
 
   @override
@@ -84,7 +146,10 @@ class _HomePageState extends State<HomePage> {
     _pomodoroRunningNotifier.dispose();
     _pomodoroPausedNotifier.dispose();
     _pomodoroSessionSeconds.dispose();
+    _pomodoroWorkDurationMinutes.dispose();
     _pomodoroShortBreakDurationMinutes.dispose();
+    _pomodoroLongBreakDurationMinutes.dispose();
+    _pomodoroCurrentModeNotifier.dispose(); // Aggiunto dispose
     _gameBonusRatioStudy.dispose();
     _currentMalusPlaytimeMinutes.dispose();
     _gameTimeElapsedNotifier.dispose();
@@ -104,9 +169,9 @@ class _HomePageState extends State<HomePage> {
           _displayName = user.displayName ?? user.email;
         });
       }
-      await _loadUserSettings(); 
-      await _loadInitialTimerStates(); 
-      await _updateTotalTimesToday(); 
+      await _loadUserSettings();
+      await _loadInitialTimerStates();
+      await _updateTotalTimesToday();
     } else {
       Future.microtask(() {
         if (mounted) {
@@ -120,73 +185,94 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadUserSettings() async {
     if (_userId == null) {
-      const defaultWorkMinutes = 25;
-      const defaultBreakMinutes = 5;
-      const defaultRatioStudy = 2;
-
-      _pomodoroSessionSeconds.value = defaultWorkMinutes * 60;
-      _pomodoroShortBreakDurationMinutes.value = defaultBreakMinutes;
-      _gameBonusRatioStudy.value = defaultRatioStudy;
-      _currentMalusPlaytimeMinutes.value = 0; 
+      _pomodoroWorkDurationMinutes.value = 25;
+      _pomodoroShortBreakDurationMinutes.value = 5;
+      _pomodoroLongBreakDurationMinutes.value = 15;
+      _gameBonusRatioStudy.value = 2;
+      _currentMalusPlaytimeMinutes.value = 0;
 
       if (!_pomodoroRunningNotifier.value) {
+        _pomodoroCurrentMode = PomodoroMode.work;
+        _pomodoroCurrentModeNotifier.value = _pomodoroCurrentMode;
+        _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
         _pomodoroTimeNotifier.value =
             Duration(seconds: _pomodoroSessionSeconds.value);
       }
       return;
     }
 
-    final userDocRef = FirebaseFirestore.instance.collection('users').doc(_userId!);
+    final names = _parseDisplayName(_displayName);
+    String firstName = names['nome']!;
+    String lastName = names['cognome']!;
+
+    final userDocRef = FirebaseFirestore.instance.collection('users').doc(
+        _userId!);
     try {
       final docSnapshot = await userDocRef.get();
-      int pomodoroWorkDuration = 25;
-      int pomodoroBreakDuration = 5;
-      int gameBonusRatio = 2;
+
+      int workMinutes = 25;
+      int shortBreakMinutes = 5;
+      int longBreakMinutes = 15;
+      int gameBonus = 2;
       int currentMalus = 0;
 
       Map<String, dynamic> settingsToSave = {};
       bool saveSettingsNeeded = false;
       bool saveMalusNeeded = false;
 
-      if (docSnapshot.exists && docSnapshot.data() != null) {
-        final data = docSnapshot.data()!;
-        final settings = data['settings'] as Map<String, dynamic>?;
+      final Map<String, dynamic>? currentData = docSnapshot.data();
+
+      if (docSnapshot.exists && currentData != null) {
+        final settings = currentData['settings'] as Map<String, dynamic>?;
 
         if (settings != null) {
-          pomodoroWorkDuration = settings['pomodoroWorkDurationMinutes'] as int? ?? pomodoroWorkDuration;
+          workMinutes =
+              settings['pomodoroWorkDurationMinutes'] as int? ?? workMinutes;
           if (settings['pomodoroWorkDurationMinutes'] == null) {
-            settingsToSave['pomodoroWorkDurationMinutes'] = pomodoroWorkDuration;
+            settingsToSave['pomodoroWorkDurationMinutes'] = workMinutes;
             saveSettingsNeeded = true;
           }
-
-          pomodoroBreakDuration = settings['pomodoroShortBreakDurationMinutes'] as int? ?? pomodoroBreakDuration;
+          shortBreakMinutes =
+              settings['pomodoroShortBreakDurationMinutes'] as int? ??
+                  shortBreakMinutes;
           if (settings['pomodoroShortBreakDurationMinutes'] == null) {
-            settingsToSave['pomodoroShortBreakDurationMinutes'] = pomodoroBreakDuration;
+            settingsToSave['pomodoroShortBreakDurationMinutes'] =
+                shortBreakMinutes;
             saveSettingsNeeded = true;
           }
-
-          gameBonusRatio = settings['gameBonusRatioStudy'] as int? ?? gameBonusRatio;
+          longBreakMinutes =
+              settings['pomodoroLongBreakDurationMinutes'] as int? ??
+                  longBreakMinutes;
+          if (settings['pomodoroLongBreakDurationMinutes'] == null) {
+            settingsToSave['pomodoroLongBreakDurationMinutes'] =
+                longBreakMinutes;
+            saveSettingsNeeded = true;
+          }
+          gameBonus = settings['gameBonusRatioStudy'] as int? ?? gameBonus;
           if (settings['gameBonusRatioStudy'] == null) {
-            settingsToSave['gameBonusRatioStudy'] = gameBonusRatio;
+            settingsToSave['gameBonusRatioStudy'] = gameBonus;
             saveSettingsNeeded = true;
           }
         } else {
-          settingsToSave['pomodoroWorkDurationMinutes'] = pomodoroWorkDuration;
-          settingsToSave['pomodoroShortBreakDurationMinutes'] = pomodoroBreakDuration;
-          settingsToSave['gameBonusRatioStudy'] = gameBonusRatio;
+          settingsToSave = {
+            'pomodoroWorkDurationMinutes': workMinutes,
+            'pomodoroShortBreakDurationMinutes': shortBreakMinutes,
+            'pomodoroLongBreakDurationMinutes': longBreakMinutes,
+            'gameBonusRatioStudy': gameBonus,
+          };
           saveSettingsNeeded = true;
         }
 
-        currentMalus = data['currentMalusPlaytimeMinutes'] as int? ?? 0;
-        if (data['currentMalusPlaytimeMinutes'] == null) {
-           saveMalusNeeded = true; 
+        currentMalus = currentData['currentMalusPlaytimeMinutes'] as int? ?? 0;
+        if (currentData['currentMalusPlaytimeMinutes'] == null) {
+          saveMalusNeeded = true;
         }
-
-      } else {
+      } else { 
         settingsToSave = {
-          'pomodoroWorkDurationMinutes': pomodoroWorkDuration,
-          'pomodoroShortBreakDurationMinutes': pomodoroBreakDuration,
-          'gameBonusRatioStudy': gameBonusRatio,
+          'pomodoroWorkDurationMinutes': workMinutes,
+          'pomodoroShortBreakDurationMinutes': shortBreakMinutes,
+          'pomodoroLongBreakDurationMinutes': longBreakMinutes,
+          'gameBonusRatioStudy': gameBonus,
         };
         saveSettingsNeeded = true;
         saveMalusNeeded = true; 
@@ -197,37 +283,65 @@ class _HomePageState extends State<HomePage> {
             {'settings': settingsToSave}, SetOptions(merge: true));
       }
       if (saveMalusNeeded) {
-        // Ensure malus is saved at the root of the user document
-        await userDocRef.set({'currentMalusPlaytimeMinutes': currentMalus}, SetOptions(merge: true));
+        await userDocRef.set({'currentMalusPlaytimeMinutes': currentMalus},
+            SetOptions(merge: true));
       }
 
-      _pomodoroSessionSeconds.value = pomodoroWorkDuration * 60;
-      _pomodoroShortBreakDurationMinutes.value = pomodoroBreakDuration;
-      _gameBonusRatioStudy.value = gameBonusRatio;
+      Map<String, dynamic> nameUpdates = {};
+      if (firstName.isNotEmpty) {
+        if (!docSnapshot.exists || currentData?['nome'] == null ||
+            currentData?['nome'] != firstName) {
+          nameUpdates['nome'] = firstName;
+        }
+      }
+      if (lastName.isNotEmpty) {
+        if (!docSnapshot.exists || currentData?['cognome'] == null ||
+            currentData?['cognome'] != lastName) {
+          nameUpdates['cognome'] = lastName;
+        }
+      }
+      if (nameUpdates.isNotEmpty) {
+        await userDocRef.set(nameUpdates, SetOptions(merge: true));
+      }
+
+      _pomodoroWorkDurationMinutes.value = workMinutes;
+      _pomodoroShortBreakDurationMinutes.value = shortBreakMinutes;
+      _pomodoroLongBreakDurationMinutes.value = longBreakMinutes;
+      _gameBonusRatioStudy.value = gameBonus;
       _currentMalusPlaytimeMinutes.value = currentMalus;
 
       if (!_pomodoroRunningNotifier.value) {
+        // _pomodoroCurrentMode e _completedWorkSessions sono caricati da _loadInitialTimerStates
+        // Quindi, se il timer non è in esecuzione, ci affidiamo ai valori caricati o ai default lì.
+        // Qui aggiorniamo _pomodoroSessionSeconds e _pomodoroTimeNotifier basati sulla modalità corrente.
+        _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
         _pomodoroTimeNotifier.value =
             Duration(seconds: _pomodoroSessionSeconds.value);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error loading user settings: ${e.toString()}')));
+            SnackBar(
+                content: Text('Error loading user settings: ${e.toString()}')));
       }
-      _pomodoroSessionSeconds.value = 25 * 60;
+      _pomodoroWorkDurationMinutes.value = 25;
       _pomodoroShortBreakDurationMinutes.value = 5;
+      _pomodoroLongBreakDurationMinutes.value = 15;
       _gameBonusRatioStudy.value = 2;
       _currentMalusPlaytimeMinutes.value = 0;
+
       if (!_pomodoroRunningNotifier.value) {
+        _pomodoroCurrentMode = PomodoroMode.work;
+        _pomodoroCurrentModeNotifier.value = _pomodoroCurrentMode;
+        _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
         _pomodoroTimeNotifier.value =
             Duration(seconds: _pomodoroSessionSeconds.value);
       }
     }
   }
+
   Future<void> _updateUserMalusInFirestore() async {
     if (_userId == null) return;
-
     try {
       final userDocRef =
       FirebaseFirestore.instance.collection('users').doc(_userId!);
@@ -242,17 +356,33 @@ class _HomePageState extends State<HomePage> {
       }
     }
   }
+
+  int _getDurationSecondsForMode(PomodoroMode mode) {
+    switch (mode) {
+      case PomodoroMode.work:
+        return _pomodoroWorkDurationMinutes.value * 60;
+      case PomodoroMode.shortBreak:
+        return _pomodoroShortBreakDurationMinutes.value * 60;
+      case PomodoroMode.longBreak:
+        return _pomodoroLongBreakDurationMinutes.value * 60;
+    }
+  }
+
   Future<void> _loadInitialTimerStates() async {
     if (_userId == null) return;
 
     final pomodoroState =
         await TimerService.loadTimerState(timerId: 'pomodoroTimer');
     if (pomodoroState != null) {
-      _pomodoroTimeNotifier.value = Duration(
-          seconds:
-              pomodoroState['currentTimeSeconds'] ?? _pomodoroSessionSeconds.value);
+      _pomodoroCurrentMode = PomodoroMode.values[pomodoroState['pomodoroCurrentMode'] ?? PomodoroMode.work.index];
+      _pomodoroCurrentModeNotifier.value = _pomodoroCurrentMode;
+      _completedWorkSessions = pomodoroState['completedWorkSessions'] ?? 0;
+      
+      _pomodoroSessionSeconds.value = pomodoroState['sessionConfiguredDurationSeconds'] ?? _getDurationSecondsForMode(_pomodoroCurrentMode);
+      _pomodoroTimeNotifier.value = Duration(seconds: pomodoroState['currentTimeSeconds'] ?? _pomodoroSessionSeconds.value);
       _pomodoroRunningNotifier.value = pomodoroState['isRunning'] ?? false;
       _pomodoroPausedNotifier.value = pomodoroState['isPaused'] ?? false;
+      
       if (pomodoroState['sessionStartTime'] != null &&
           pomodoroState['sessionStartTime'] is Timestamp) {
         _pomodoroSessionStartTime =
@@ -262,11 +392,18 @@ class _HomePageState extends State<HomePage> {
       }
 
       if (_pomodoroRunningNotifier.value && !_pomodoroPausedNotifier.value) {
-        _actuallyStartPomodoro(fromLoad: true);
+         _pomodoroDartTimer?.cancel(); 
+         _pomodoroDartTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
+           _tickPomodoro();
+         });
       }
     } else {
-      _pomodoroTimeNotifier.value =
-          Duration(seconds: _pomodoroSessionSeconds.value);
+      // Nessuno stato salvato, imposta default basati sulla modalità di lavoro
+      _pomodoroCurrentMode = PomodoroMode.work;
+      _pomodoroCurrentModeNotifier.value = PomodoroMode.work;
+      _completedWorkSessions = 0;
+      _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
+      _pomodoroTimeNotifier.value = Duration(seconds: _pomodoroSessionSeconds.value);
     }
 
     final gameState = await TimerService.loadTimerState(timerId: 'gameTimer');
@@ -305,6 +442,9 @@ class _HomePageState extends State<HomePage> {
         'sessionStartTime': _pomodoroSessionStartTime != null
             ? Timestamp.fromDate(_pomodoroSessionStartTime!)
             : null,
+        'pomodoroCurrentMode': _pomodoroCurrentMode.index,
+        'completedWorkSessions': _completedWorkSessions,
+        'sessionConfiguredDurationSeconds': _pomodoroSessionSeconds.value, 
       },
     );
 
@@ -321,13 +461,37 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  String _generateNamePrefixForDocId(String? displayName) {
+    if (displayName == null || displayName.trim().isEmpty) {
+      return "unknown_user"; 
+    }
+    String sanitizedName = displayName
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), '') 
+        .trim();
+    if (sanitizedName.isEmpty) {
+      return "unknown_user";
+    }
+    List<String> parts = sanitizedName.split(' ').where((p) => p.isNotEmpty).toList();
+    String prefix;
+    if (parts.length >= 2) {
+      prefix = "${parts.last}_${parts.first}";
+    } else if (parts.length == 1) {
+      prefix = parts.first;
+    } else {
+      prefix = "unknown_user"; 
+    }
+    prefix = prefix.replaceAll(' ', '_').replaceAll(RegExp(r'_+'), '_');
+    prefix = prefix.replaceAll(RegExp(r'^_|_$'), '');
+    return prefix.isEmpty ? "unknown_user" : prefix;
+  }
+
   Future<void> _logSession({
     required String timerType,
     required DateTime startTime,
     required Duration duration,
   }) async {
     if (_userId == null || duration.inSeconds <= 0) return;
-
     try {
       await TimerService.addSessionLog(sessionData: {
         'userId': _userId,
@@ -347,28 +511,22 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _updateTotalTimesToday() async {
     if (_userId == null) return;
-
     try {
       final querySnapshot = await FirebaseFirestore.instance
           .collection('users')
           .doc(_userId!)
           .collection('sessions')
           .get();
-
       DateTime now = DateTime.now();
       DateTime startOfDay = DateTime(now.year, now.month, now.day);
       DateTime endOfDay =
           DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
-
       Duration totalPomodoro = Duration.zero;
       Duration totalGame = Duration.zero;
-
       for (var doc in querySnapshot.docs) {
         Map<String, dynamic> data = doc.data();
         if (data['startTime'] == null || data['durationSeconds'] == null) continue;
-
         DateTime sessionStartTime = (data['startTime'] as Timestamp).toDate();
-
         if (sessionStartTime
                 .isAfter(startOfDay.subtract(const Duration(milliseconds: 1))) &&
             sessionStartTime
@@ -392,77 +550,188 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _actuallyStartPomodoro({bool fromLoad = false}) {
+  Future<void> _initializeNotifications() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+    AndroidInitializationSettings('app_icon');
+
+    final DarwinInitializationSettings initializationSettingsIOS =
+    DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+      onDidReceiveLocalNotification:
+      _appOnDidReceiveLocalNotificationForIOS, // Pass the top-level function here
+    );
+
+    final InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: initializationSettingsIOS,
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse notificationResponse) async {
+        // Gestisci il tap sulla notifica qui (quando l'app è in background o terminata e l'utente tocca la notifica)
+        // String? payload = notificationResponse.payload;
+        // if (payload != null) {
+        //   debugPrint('notification payload: $payload');
+        // }
+      },
+      // onDidReceiveBackgroundNotificationResponse: notificationTapBackground, // per gestire tap su notifiche in background su Android (necessita di una top-level/static function)
+    );
+
+    // Richiedi permessi su Android 13+
+    if (Theme.of(context).platform == TargetPlatform.android) { // Assicurati che 'Theme.of(context)' sia accessibile qui
+      final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+      flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      final bool? granted = await androidImplementation?.requestNotificationsPermission();
+      // Puoi controllare 'granted' se necessario
+    }
+
+    // Richiedi permessi su iOS (già fatto in initializationSettingsIOS ma puoi essere più esplicito)
+    // Nota: su iOS >= 10, la richiesta di permessi e la gestione delle notifiche in foreground
+    // sono gestite diversamente (spesso in AppDelegate). La callback onDidReceiveLocalNotification
+    // è specificamente per iOS < 10 foreground.
+    if (Theme.of(context).platform == TargetPlatform.iOS) { // Assicurati che 'Theme.of(context)' sia accessibile qui
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+    }
+  }
+
+// Funzione per mostrare una notifica
+  Future<void> _showNotification(String title, String body) async {
+    const AndroidNotificationDetails androidNotificationDetails =
+    AndroidNotificationDetails(
+      'pomodoro_channel_id', // id del canale
+      'Pomodoro Notifications', // nome del canale
+      channelDescription: 'Notifications for Pomodoro timer alerts', // descrizione
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true, // Emette il suono di default
+      // sound: RawResourceAndroidNotificationSound('nome_file_suono_custom_senza_estensione'), // Per suoni custom in res/raw
+      ticker: 'ticker',
+    );
+    const NotificationDetails notificationDetails =
+    NotificationDetails(android: androidNotificationDetails);
+
+    await flutterLocalNotificationsPlugin.show(
+      0, // id della notifica (puoi usare id diversi se necessario)
+      title,
+      body,
+      notificationDetails,
+      // payload: 'item x', // Dati opzionali da passare quando si clicca la notifica
+    );
+  }
+
+  void _actuallyStartPomodoro() {
+    _completedWorkSessions = 0; 
+    _startPomodoroSession(PomodoroMode.work, isManuallyStartedCycle: true);
+  }
+
+  void _startPomodoroSession(PomodoroMode mode, {bool fromLoad = false, bool isManuallyStartedCycle = false}) {
     _pomodoroDartTimer?.cancel();
+
+    _pomodoroCurrentMode = mode;
+    _pomodoroCurrentModeNotifier.value = mode;
     _pomodoroRunningNotifier.value = true;
     _pomodoroPausedNotifier.value = false;
 
+    if (mode == PomodoroMode.work) {
+      _notifiedWorkSessionThresholds.clear(); // Resetta le soglie notificate all'inizio di una sessione di LAVORO
+    }
+
     if (!fromLoad) {
-      _pomodoroTimeNotifier.value =
-          Duration(seconds: _pomodoroSessionSeconds.value);
+      _pomodoroSessionSeconds.value = _getDurationSecondsForMode(mode);
+      _pomodoroTimeNotifier.value = Duration(seconds: _pomodoroSessionSeconds.value);
       _pomodoroSessionStartTime = DateTime.now();
     }
 
-    _pomodoroDartTimer =
-        Timer.periodic(const Duration(seconds: 1), (Timer timer) {
+    _pomodoroDartTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       _tickPomodoro();
     });
+
     _saveCurrentTimerStates();
+
+    if (mounted && !fromLoad) {
+      String message = "";
+      if (mode == PomodoroMode.work) message = "Work session started!";
+      else if (mode == PomodoroMode.shortBreak) message = "Time for a short break!";
+      else if (mode == PomodoroMode.longBreak) message = "Time for a long break!";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
+
 
   void _tickPomodoro() {
-    if (!mounted) {
-      _pomodoroDartTimer?.cancel();
-      return;
-    }
-    if (!_pomodoroRunningNotifier.value || _pomodoroPausedNotifier.value) {
-      return;
-    }
+    if (!mounted || !_pomodoroRunningNotifier.value || _pomodoroPausedNotifier.value) return;
+
     if (_pomodoroTimeNotifier.value.inSeconds > 0) {
-      _pomodoroTimeNotifier.value =
-          Duration(seconds: _pomodoroTimeNotifier.value.inSeconds - 1);
+      _pomodoroTimeNotifier.value = Duration(seconds: _pomodoroTimeNotifier.value.inSeconds - 1);
+
+      // Logica per le notifiche intermedie durante la sessione di lavoro
+      if (_pomodoroCurrentMode == PomodoroMode.work) {
+        int currentTimeSeconds = _pomodoroTimeNotifier.value.inSeconds;
+
+        // Soglie in secondi (15 min = 900s, 10 min = 600s, 5 min = 300s)
+        List<int> thresholds = [900, 600, 300];
+
+        for (int threshold in thresholds) {
+          if (currentTimeSeconds == threshold && !_notifiedWorkSessionThresholds.contains(threshold)) {
+            int minutesLeft = threshold ~/ 60;
+            _showNotification(
+              'Pomodoro Alert',
+              '$minutesLeft minutes remaining in your work session!',
+            );
+            _notifiedWorkSessionThresholds.add(threshold); // Segna come notificata
+            break; // Evita notifiche multiple nello stesso tick se le soglie fossero molto vicine
+          }
+        }
+      }
       _saveCurrentTimerStates();
     } else {
+      // ... (logica esistente per quando la sessione finisce)
+      Duration completedSessionDuration = Duration(seconds: _pomodoroSessionSeconds.value);
       if (_pomodoroSessionStartTime != null) {
         _logSession(
-          timerType: 'pomodoro',
-          startTime: _pomodoroSessionStartTime!,
-          duration: Duration(seconds: _pomodoroSessionSeconds.value),
-        );
+            timerType: 'pomodoro',
+            startTime: _pomodoroSessionStartTime!,
+            duration: completedSessionDuration);
       }
-      _stopPomodoro();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Pomodoro session finished! Time for a break.')),
-        );
+
+      PomodoroMode previousMode = _pomodoroCurrentMode;
+      PomodoroMode nextMode;
+
+      if (previousMode == PomodoroMode.work) {
+        _completedWorkSessions++;
+        if (_currentMalusPlaytimeMinutes.value > 0) {
+          // ... (logica riduzione malus) ...
+        }
+        if (_completedWorkSessions >= _workSessionsBeforeLongBreak) {
+          nextMode = PomodoroMode.longBreak;
+        } else {
+          nextMode = PomodoroMode.shortBreak;
+        }
+      } else if (previousMode == PomodoroMode.shortBreak) {
+        nextMode = PomodoroMode.work;
+      } else {
+        nextMode = PomodoroMode.work;
+        _completedWorkSessions = 0;
       }
+      _startPomodoroSession(nextMode);
     }
   }
-
-  void _pausePomodoro() {
-    if (_pomodoroRunningNotifier.value) {
-      _pomodoroPausedNotifier.value = true;
-      _saveCurrentTimerStates();
-    }
-  }
-
-  void _resumePomodoro() {
-    if (_pomodoroRunningNotifier.value) {
-      _pomodoroPausedNotifier.value = false;
-      _pomodoroSessionStartTime ??= DateTime.now()
-          .subtract(Duration(seconds: _pomodoroSessionSeconds.value) -
-              _pomodoroTimeNotifier.value);
-      _saveCurrentTimerStates();
-    }
-  }
-
   void _stopPomodoro() {
     _pomodoroDartTimer?.cancel();
+
     if (_pomodoroSessionStartTime != null && _pomodoroRunningNotifier.value) {
-      Duration durationToLog =
-          Duration(seconds: _pomodoroSessionSeconds.value) -
-              _pomodoroTimeNotifier.value;
+      Duration durationToLog = Duration(seconds: _pomodoroSessionSeconds.value) - _pomodoroTimeNotifier.value;
       if (durationToLog.inSeconds > 0) {
         _logSession(
           timerType: 'pomodoro',
@@ -471,12 +740,38 @@ class _HomePageState extends State<HomePage> {
         );
       }
     }
+
     _pomodoroRunningNotifier.value = false;
     _pomodoroPausedNotifier.value = false;
-    _pomodoroTimeNotifier.value =
-        Duration(seconds: _pomodoroSessionSeconds.value);
+    _pomodoroCurrentMode = PomodoroMode.work; 
+    _pomodoroCurrentModeNotifier.value = PomodoroMode.work;
+    _pomodoroSessionSeconds.value = _getDurationSecondsForMode(PomodoroMode.work); 
+    _pomodoroTimeNotifier.value = Duration(seconds: _pomodoroSessionSeconds.value);
     _pomodoroSessionStartTime = null;
-    _saveCurrentTimerStates();
+
+    _saveCurrentTimerStates(); 
+
+    if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Pomodoro session stopped.')));
+    }
+  }
+
+  void _pausePomodoro() {
+    if (_pomodoroRunningNotifier.value) {
+      _pomodoroPausedNotifier.value = true;
+      _saveCurrentTimerStates(); 
+    }
+  }
+
+  void _resumePomodoro() {
+    if (_pomodoroRunningNotifier.value && _pomodoroPausedNotifier.value) { 
+      _pomodoroPausedNotifier.value = false;
+      _pomodoroSessionStartTime ??= DateTime.now().subtract(
+         Duration(seconds: _pomodoroSessionSeconds.value) - _pomodoroTimeNotifier.value
+      ); 
+      _saveCurrentTimerStates(); 
+    }
   }
 
   void _actuallyStartGameTimer({bool fromLoad = false}) {
@@ -487,22 +782,15 @@ class _HomePageState extends State<HomePage> {
     if (!fromLoad) {
       _gameTimeElapsedNotifier.value = Duration.zero;
       _gameSessionStartTime = DateTime.now();
-
-      // --- INIZIO MODIFICHE FASE 3 ---
-      // Salva lo stato attuale di studio e malus all'avvio del gioco
       _studyTimeAtGameStartMinutes = _totalPomodoroTimeToday.value.inMinutes;
       _malusAtGameStartMinutes = _currentMalusPlaytimeMinutes.value;
-      // --- FINE MODIFICHE FASE 3 ---
     }
 
     _gameDartTimer =
         Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       _tickGame();
     });
-    _saveCurrentTimerStates();// Salva lo stato del timer, inclusi isRunning, sessionStartTime, ecc.
-    // Non salva _studyTimeAtGameStartMinutes o _malusAtGameStartMinutes
-    // perché quelli sono stati di "inizio sessione", non lo stato continuo del timer.
-
+    _saveCurrentTimerStates();
   }
 
   void _tickGame() {
@@ -536,7 +824,6 @@ class _HomePageState extends State<HomePage> {
 
   void _stopGameTimer() {
     _gameDartTimer?.cancel();
-
     if (_gameSessionStartTime != null && _gameRunningNotifier.value) {
       Duration durationToLog = _gameTimeElapsedNotifier.value;
       if (durationToLog.inSeconds > 0) {
@@ -544,34 +831,19 @@ class _HomePageState extends State<HomePage> {
             timerType: 'game',
             startTime: _gameSessionStartTime!,
             duration: durationToLog);
-
-        // --- INIZIO LOGICA CALCOLO MALUS (FASE 3) ---
         bool shouldAccumulateMalus = false;
-
-        // Condizione 1: Si è partiti con un malus esistente
         if (_malusAtGameStartMinutes > 0) {
           shouldAccumulateMalus = true;
         }
-        // Condizione 2: Non si è raggiunta la soglia di studio giornaliera PRIMA di iniziare a giocare
         else if (_studyTimeAtGameStartMinutes < _gameGateMinDailyStudyMinutes) {
           shouldAccumulateMalus = true;
         }
-
         if (shouldAccumulateMalus) {
-          // Il malus viene calcolato in base ai minuti interi di gioco.
-          // Arrotondiamo per eccesso se ci sono secondi parziali,
-          // oppure usiamo i minuti interi. Per semplicità qui usiamo i minuti interi,
-          // ma potresti voler cambiare in (durationToLog.inSeconds / 60).ceil()
-          // se vuoi essere più "punitivo" per i secondi parziali.
           int gameMinutesPlayed = durationToLog.inMinutes;
-
           if (gameMinutesPlayed > 0) {
             int malusGenerated = gameMinutesPlayed * _gameBonusRatioStudy.value;
             _currentMalusPlaytimeMinutes.value += malusGenerated;
-
-            // Aggiorna il malus in Firestore
             _updateUserMalusInFirestore();
-
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -582,17 +854,15 @@ class _HomePageState extends State<HomePage> {
             }
           }
         }
-        // --- FINE LOGICA CALCOLO MALUS (FASE 3) ---
       }
     }
-
     _gameRunningNotifier.value = false;
     _gamePausedNotifier.value = false;
     _gameTimeElapsedNotifier.value = Duration.zero;
-    _gameSessionStartTime = null; // Resetta l'ora di inizio della sessione di gioco
-    _studyTimeAtGameStartMinutes = 0; // Resetta lo stato di inizio gioco
-    _malusAtGameStartMinutes = 0;   // Resetta lo stato di inizio gioco
-    _saveCurrentTimerStates(); // Salva lo stato del timer (che ora è fermo)
+    _gameSessionStartTime = null; 
+    _studyTimeAtGameStartMinutes = 0; 
+    _malusAtGameStartMinutes = 0;   
+    _saveCurrentTimerStates(); 
   }
 
   Future<bool?> _showConfirmationDialog(
@@ -639,8 +909,9 @@ class _HomePageState extends State<HomePage> {
           timeNotifier: _pomodoroTimeNotifier,
           runningNotifier: _pomodoroRunningNotifier,
           pausedNotifier: _pomodoroPausedNotifier,
-          sessionSeconds: _pomodoroSessionSeconds,
-          onStart: () async {
+          sessionSeconds: _pomodoroSessionSeconds, 
+          currentModeNotifier: _pomodoroCurrentModeNotifier, // Passato qui
+          onStart: () async { 
             if (!mounted) return;
             if (_gameRunningNotifier.value) {
               final confirmed = await _showConfirmationDialog(
@@ -663,7 +934,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _navigateToGameTimerPage(BuildContext context) {
-    // 1. Avviso Soglia Studio Non Raggiunta
     final studyMinutesToday = _totalPomodoroTimeToday.value.inMinutes;
     if (studyMinutesToday < _gameGateMinDailyStudyMinutes) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -675,9 +945,6 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-
-    // 2. Avviso Malus Esistente
-    // Questo snackbar potrebbe sovrascrivere il precedente se entrambe le condizioni sono vere.
     if (_currentMalusPlaytimeMinutes.value > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -688,8 +955,6 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-
-    // Si procede sempre con la navigazione
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -702,14 +967,14 @@ class _HomePageState extends State<HomePage> {
             if (_pomodoroRunningNotifier.value) {
               final confirmed = await _showConfirmationDialog(
                   context, "Pomodoro Timer", "Game Timer");
-              if (!mounted || confirmed != true) return; // Modificato per controllare confirmed != true
+              if (!mounted || confirmed != true) return; 
               _stopPomodoro();
             }
             _actuallyStartGameTimer();
           },
           onPause: _pauseGameTimer,
           onResume: _resumeGameTimer,
-          onStop: _stopGameTimer, // Calcolo malus nella Fase 3
+          onStop: _stopGameTimer, 
         ),
       ),
     );
@@ -735,23 +1000,29 @@ class _HomePageState extends State<HomePage> {
                   builder: (context) => SettingsPage(
                     userId: _userId!,
                     initialPomodoroWorkDuration: 
-                        (_pomodoroSessionSeconds.value / 60).round(),
+                        _pomodoroWorkDurationMinutes.value, // Modificato per usare il notifier
                     initialPomodoroShortBreakDuration:
-                        _pomodoroShortBreakDurationMinutes.value, // Phase 1 change
-                    initialGameBonusRatioStudy: _gameBonusRatioStudy.value, // Phase 1 change
+                        _pomodoroShortBreakDurationMinutes.value, 
+                    initialPomodoroLongBreakDuration: 
+                        _pomodoroLongBreakDurationMinutes.value, // Aggiunto
+                    initialGameBonusRatioStudy: _gameBonusRatioStudy.value, 
                     onSettingsChanged:
-                        (workDuration, breakDuration, ratioStudy) { // Phase 1 change
+                        (workDur, shortBreakDur, longBreakDur, ratioStudy) { 
                       if (!mounted) return;
-                      setState(() {
-                        _pomodoroSessionSeconds.value = workDuration * 60;
-                        _pomodoroShortBreakDurationMinutes.value = breakDuration; // Phase 1 change
-                        _gameBonusRatioStudy.value = ratioStudy; // Phase 1 change
+                      // setState(() { // Non necessario se i ValueNotifier aggiornano la UI
+                        _pomodoroWorkDurationMinutes.value = workDur;
+                        _pomodoroShortBreakDurationMinutes.value = shortBreakDur; 
+                        _pomodoroLongBreakDurationMinutes.value = longBreakDur; // Aggiunto
+                        _gameBonusRatioStudy.value = ratioStudy; 
 
                         if (!_pomodoroRunningNotifier.value) {
+                           // Aggiorna la durata della sessione corrente se non è in esecuzione
+                           // basandosi sulla modalità Pomodoro corrente.
+                          _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
                           _pomodoroTimeNotifier.value =
                               Duration(seconds: _pomodoroSessionSeconds.value);
                         }
-                      });
+                      // });
                     },
                   ),
                 ),
@@ -894,6 +1165,7 @@ class PomodoroPage extends StatefulWidget {
   final ValueNotifier<bool> runningNotifier;
   final ValueNotifier<bool> pausedNotifier;
   final ValueNotifier<int> sessionSeconds;
+  final ValueNotifier<PomodoroMode> currentModeNotifier; // Aggiunto
   final VoidCallback onStart;
   final VoidCallback onPause;
   final VoidCallback onResume;
@@ -905,6 +1177,7 @@ class PomodoroPage extends StatefulWidget {
     required this.runningNotifier,
     required this.pausedNotifier,
     required this.sessionSeconds,
+    required this.currentModeNotifier, // Aggiunto
     required this.onStart,
     required this.onPause,
     required this.onResume,
@@ -916,32 +1189,26 @@ class PomodoroPage extends StatefulWidget {
 }
 
 class _PomodoroPageState extends State<PomodoroPage> {
+  String _getModeText(PomodoroMode mode) {
+    switch (mode) {
+      case PomodoroMode.work:
+        return 'Work Session';
+      case PomodoroMode.shortBreak:
+        return 'Short Break';
+      case PomodoroMode.longBreak:
+        return 'Long Break';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: true, 
-      onPopInvokedWithResult: (bool didPop, dynamic result) async {
-        if (didPop) return;
-        final confirm = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Stop Timer?'),
-            content: const Text(
-                'The Pomodoro timer is running. Do you want to stop it and go back?'),
-            actions: <Widget>[
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel')),
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Stop and Go Back')),
-            ],
-          ),
-        );
-        if (confirm == true && mounted) {
-          widget.onStop();
-          Navigator.of(context).pop();
-        }
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        // Timer continues running in the background. No action needed here to stop it.
+        // if (didPop && widget.runningNotifier.value) {
+        //   print('Popped PomodoroPage while timer was running.');
+        // }
       },
       child: Scaffold(
         appBar: AppBar(
@@ -951,19 +1218,29 @@ class _PomodoroPageState extends State<PomodoroPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
-              ValueListenableBuilder<int>(
-                  valueListenable: widget.sessionSeconds,
-                  builder: (context, fullDurationSeconds, _) {
-                    return ValueListenableBuilder<Duration>(
-                      valueListenable: widget.timeNotifier,
-                      builder: (context, timeLeft, _) {
-                        return Text(
-                          formatDuration(timeLeft),
-                          style: Theme.of(context).textTheme.displayLarge,
-                        );
-                      },
-                    );
-                  }),
+              ValueListenableBuilder<PomodoroMode>(
+                valueListenable: widget.currentModeNotifier,
+                builder: (context, mode, _) {
+                  return Text(
+                    _getModeText(mode),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          color: mode == PomodoroMode.work
+                              ? Colors.blueGrey 
+                              : Colors.teal,    
+                        ),
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              ValueListenableBuilder<Duration>(
+                valueListenable: widget.timeNotifier,
+                builder: (context, timeLeft, _) {
+                  return Text(
+                    formatDuration(timeLeft),
+                    style: Theme.of(context).textTheme.displayLarge,
+                  );
+                },
+              ),
               const SizedBox(height: 20),
               ValueListenableBuilder<bool>(
                 valueListenable: widget.runningNotifier,
@@ -1046,28 +1323,11 @@ class _GameTimerPageState extends State<GameTimerPage> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: true, 
-      onPopInvokedWithResult: (bool didPop, dynamic result) async {
-        if (didPop) return;
-        final confirm = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Stop Timer?'),
-            content: const Text(
-                'The Game timer is running. Do you want to stop it and go back?'),
-            actions: <Widget>[
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel')),
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Stop and Go Back')),
-            ],
-          ),
-        );
-        if (confirm == true && mounted) {
-          widget.onStop();
-          Navigator.of(context).pop();
-        }
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        // Timer continues running in the background. No action needed here to stop it.
+        // if (didPop && widget.runningNotifier.value) {
+        //   print('Popped GameTimerPage while timer was running.');
+        // }
       },
       child: Scaffold(
         appBar: AppBar(
