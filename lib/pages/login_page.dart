@@ -18,8 +18,9 @@ class LoginPage extends StatelessWidget {
       );
 
       return await FirebaseAuth.instance.signInWithCredential(credential);
-    } catch (e) {
+    } catch (e, s) { // Aggiungi lo stack trace 's'
       print('Google Sign-In error: $e');
+      print('Stack trace: $s'); // Stampa lo stack trace per un debug più approfondito
       return null;
     }
   }
