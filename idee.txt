@@ -2,6 +2,12 @@ FATTO- i documenti su db devono avere id aaaaMMddThhmmss_tipodoc
 - bonus attività premianti:
 -- tabellina (ordine alfabetico) per scegliere le attività premianti (mostra nome, minuti, "ok").
     Se non c'è, posso aggiungerla in una riga nuova e verrà registrata su DB e proposta la prossima volta
+
+
+- commit push da PC-EJ, c'erano  sicuramente altre idee
+- suoni/notifiche
+- alla fine del timer, continua a contare: se finiti i 25 min di studio, continuo a studiare, contalo come tempo aggiuntivo di studio, non passare automaticamente alla pausa
+- ? se metto in  pausa un timer per 5 minuti...chiudo l'app e la riapro...i 5 minuti come sono conteggiati? No, resta in pausa, ma facendolo partire, non riparte il tempo
 - _workSessionsBeforeLongBreak va messe in settings
 FATTO - ora i pomodori hanno stop che avvia subito la sessione successiva di pausa/lavoro...ma non si capisce dai log come li conta
 - popup su schermo spento

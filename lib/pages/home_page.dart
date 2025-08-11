@@ -11,6 +11,10 @@ import '../services/auth_service.dart';
 import '../services/timer_service.dart';
 import 'settings_page.dart';
 import 'login_page.dart';
+import 'package:audioplayers/audioplayers.dart'; // Added for beep sound
+
+// REMINDER: Add audioplayers: ^6.0.0 (or latest) to your pubspec.yaml
+// REMINDER: Add a beep sound file (e.g., assets/sounds/beep.mp3) to your assets and declare it in pubspec.yaml
 
 // Add this top-level function, typically after imports or before your _HomePageState class
 void _appOnDidReceiveLocalNotificationForIOS(
@@ -52,6 +56,8 @@ class _HomePageState extends State<HomePage> {
   String? _userId;
   String? _displayName;
 
+  final AudioPlayer _audioPlayer = AudioPlayer(); // Added for beep sound
+
   // Pomodoro Timer State
   final ValueNotifier<Duration> _pomodoroTimeNotifier =
       ValueNotifier(const Duration(minutes: 25));
@@ -76,7 +82,7 @@ class _HomePageState extends State<HomePage> {
   Timer? _pomodoroDartTimer;
 
   // Variabili per il ciclo Pomodoro (esistenti)
-  PomodoroMode _pomodoroCurrentMode = PomodoroMode.work; 
+  PomodoroMode _pomodoroCurrentMode = PomodoroMode.work;
   final ValueNotifier<PomodoroMode> _pomodoroCurrentModeNotifier = ValueNotifier(PomodoroMode.work); // Per la UI
   int _completedWorkSessions = 0;
   final int _workSessionsBeforeLongBreak = 3; // Mantieni o rendi configurabile in settings
@@ -142,6 +148,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _pomodoroDartTimer?.cancel();
     _gameDartTimer?.cancel();
+    _audioPlayer.dispose(); // Dispose audio player
     _pomodoroTimeNotifier.dispose();
     _pomodoroRunningNotifier.dispose();
     _pomodoroPausedNotifier.dispose();
@@ -267,7 +274,7 @@ class _HomePageState extends State<HomePage> {
         if (currentData['currentMalusPlaytimeMinutes'] == null) {
           saveMalusNeeded = true;
         }
-      } else { 
+      } else {
         settingsToSave = {
           'pomodoroWorkDurationMinutes': workMinutes,
           'pomodoroShortBreakDurationMinutes': shortBreakMinutes,
@@ -377,12 +384,12 @@ class _HomePageState extends State<HomePage> {
       _pomodoroCurrentMode = PomodoroMode.values[pomodoroState['pomodoroCurrentMode'] ?? PomodoroMode.work.index];
       _pomodoroCurrentModeNotifier.value = _pomodoroCurrentMode;
       _completedWorkSessions = pomodoroState['completedWorkSessions'] ?? 0;
-      
+
       _pomodoroSessionSeconds.value = pomodoroState['sessionConfiguredDurationSeconds'] ?? _getDurationSecondsForMode(_pomodoroCurrentMode);
       _pomodoroTimeNotifier.value = Duration(seconds: pomodoroState['currentTimeSeconds'] ?? _pomodoroSessionSeconds.value);
       _pomodoroRunningNotifier.value = pomodoroState['isRunning'] ?? false;
       _pomodoroPausedNotifier.value = pomodoroState['isPaused'] ?? false;
-      
+
       if (pomodoroState['sessionStartTime'] != null &&
           pomodoroState['sessionStartTime'] is Timestamp) {
         _pomodoroSessionStartTime =
@@ -392,7 +399,7 @@ class _HomePageState extends State<HomePage> {
       }
 
       if (_pomodoroRunningNotifier.value && !_pomodoroPausedNotifier.value) {
-         _pomodoroDartTimer?.cancel(); 
+         _pomodoroDartTimer?.cancel();
          _pomodoroDartTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
            _tickPomodoro();
          });
@@ -444,7 +451,7 @@ class _HomePageState extends State<HomePage> {
             : null,
         'pomodoroCurrentMode': _pomodoroCurrentMode.index,
         'completedWorkSessions': _completedWorkSessions,
-        'sessionConfiguredDurationSeconds': _pomodoroSessionSeconds.value, 
+        'sessionConfiguredDurationSeconds': _pomodoroSessionSeconds.value,
       },
     );
 
@@ -461,13 +468,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /*
   String _generateNamePrefixForDocId(String? displayName) {
+
     if (displayName == null || displayName.trim().isEmpty) {
-      return "unknown_user"; 
+      return "unknown_user";
     }
     String sanitizedName = displayName
         .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9\s]'), '') 
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
         .trim();
     if (sanitizedName.isEmpty) {
       return "unknown_user";
@@ -479,12 +488,13 @@ class _HomePageState extends State<HomePage> {
     } else if (parts.length == 1) {
       prefix = parts.first;
     } else {
-      prefix = "unknown_user"; 
+      prefix = "unknown_user";
     }
     prefix = prefix.replaceAll(' ', '_').replaceAll(RegExp(r'_+'), '_');
     prefix = prefix.replaceAll(RegExp(r'^_|_$'), '');
     return prefix.isEmpty ? "unknown_user" : prefix;
   }
+     */
 
   Future<void> _logSession({
     required String timerType,
@@ -586,6 +596,10 @@ class _HomePageState extends State<HomePage> {
       flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       final bool? granted = await androidImplementation?.requestNotificationsPermission();
+      if(!granted!){
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Notifications permission denied')));
+      }
       // Puoi controllare 'granted' se necessario
     }
 
@@ -631,7 +645,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _actuallyStartPomodoro() {
-    _completedWorkSessions = 0; 
+    _completedWorkSessions = 0;
     _startPomodoroSession(PomodoroMode.work, isManuallyStartedCycle: true);
   }
 
@@ -673,8 +687,8 @@ class _HomePageState extends State<HomePage> {
     if (!mounted || !_pomodoroRunningNotifier.value || _pomodoroPausedNotifier.value) return;
 
     if (_pomodoroTimeNotifier.value.inSeconds > 0) {
-      _pomodoroTimeNotifier.value = Duration(seconds: _pomodoroTimeNotifier.value.inSeconds - 1);
-
+      _pomodoroTimeNotifier.value =
+          Duration(seconds: _pomodoroTimeNotifier.value.inSeconds - 1);
       // Logica per le notifiche intermedie durante la sessione di lavoro
       if (_pomodoroCurrentMode == PomodoroMode.work) {
         int currentTimeSeconds = _pomodoroTimeNotifier.value.inSeconds;
@@ -694,6 +708,12 @@ class _HomePageState extends State<HomePage> {
           }
         }
       }
+      // Play beep sound every minute
+      if (_pomodoroTimeNotifier.value.inSeconds % 60 == 0 &&
+          _pomodoroTimeNotifier.value.inSeconds > 0) { // Avoid beep at 00:00
+        _audioPlayer.play(AssetSource('sounds/beep.mp3')); // REMINDER: Ensure 'assets/sounds/beep.mp3' exists
+      }
+
       _saveCurrentTimerStates();
     } else {
       // ... (logica esistente per quando la sessione finisce)
@@ -743,13 +763,13 @@ class _HomePageState extends State<HomePage> {
 
     _pomodoroRunningNotifier.value = false;
     _pomodoroPausedNotifier.value = false;
-    _pomodoroCurrentMode = PomodoroMode.work; 
+    _pomodoroCurrentMode = PomodoroMode.work;
     _pomodoroCurrentModeNotifier.value = PomodoroMode.work;
-    _pomodoroSessionSeconds.value = _getDurationSecondsForMode(PomodoroMode.work); 
+    _pomodoroSessionSeconds.value = _getDurationSecondsForMode(PomodoroMode.work);
     _pomodoroTimeNotifier.value = Duration(seconds: _pomodoroSessionSeconds.value);
     _pomodoroSessionStartTime = null;
 
-    _saveCurrentTimerStates(); 
+    _saveCurrentTimerStates();
 
     if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -760,17 +780,17 @@ class _HomePageState extends State<HomePage> {
   void _pausePomodoro() {
     if (_pomodoroRunningNotifier.value) {
       _pomodoroPausedNotifier.value = true;
-      _saveCurrentTimerStates(); 
+      _saveCurrentTimerStates();
     }
   }
 
   void _resumePomodoro() {
-    if (_pomodoroRunningNotifier.value && _pomodoroPausedNotifier.value) { 
+    if (_pomodoroRunningNotifier.value && _pomodoroPausedNotifier.value) {
       _pomodoroPausedNotifier.value = false;
       _pomodoroSessionStartTime ??= DateTime.now().subtract(
          Duration(seconds: _pomodoroSessionSeconds.value) - _pomodoroTimeNotifier.value
-      ); 
-      _saveCurrentTimerStates(); 
+      );
+      _saveCurrentTimerStates();
     }
   }
 
@@ -859,10 +879,10 @@ class _HomePageState extends State<HomePage> {
     _gameRunningNotifier.value = false;
     _gamePausedNotifier.value = false;
     _gameTimeElapsedNotifier.value = Duration.zero;
-    _gameSessionStartTime = null; 
-    _studyTimeAtGameStartMinutes = 0; 
-    _malusAtGameStartMinutes = 0;   
-    _saveCurrentTimerStates(); 
+    _gameSessionStartTime = null;
+    _studyTimeAtGameStartMinutes = 0;
+    _malusAtGameStartMinutes = 0;
+    _saveCurrentTimerStates();
   }
 
   Future<bool?> _showConfirmationDialog(
@@ -909,9 +929,9 @@ class _HomePageState extends State<HomePage> {
           timeNotifier: _pomodoroTimeNotifier,
           runningNotifier: _pomodoroRunningNotifier,
           pausedNotifier: _pomodoroPausedNotifier,
-          sessionSeconds: _pomodoroSessionSeconds, 
+          sessionSeconds: _pomodoroSessionSeconds,
           currentModeNotifier: _pomodoroCurrentModeNotifier, // Passato qui
-          onStart: () async { 
+          onStart: () async {
             if (!mounted) return;
             if (_gameRunningNotifier.value) {
               final confirmed = await _showConfirmationDialog(
@@ -967,14 +987,14 @@ class _HomePageState extends State<HomePage> {
             if (_pomodoroRunningNotifier.value) {
               final confirmed = await _showConfirmationDialog(
                   context, "Pomodoro Timer", "Game Timer");
-              if (!mounted || confirmed != true) return; 
+              if (!mounted || confirmed != true) return;
               _stopPomodoro();
             }
             _actuallyStartGameTimer();
           },
           onPause: _pauseGameTimer,
           onResume: _resumeGameTimer,
-          onStop: _stopGameTimer, 
+          onStop: _stopGameTimer,
         ),
       ),
     );
@@ -1002,18 +1022,18 @@ class _HomePageState extends State<HomePage> {
                     initialPomodoroWorkDuration: 
                         _pomodoroWorkDurationMinutes.value, // Modificato per usare il notifier
                     initialPomodoroShortBreakDuration:
-                        _pomodoroShortBreakDurationMinutes.value, 
-                    initialPomodoroLongBreakDuration: 
+                        _pomodoroShortBreakDurationMinutes.value,
+                    initialPomodoroLongBreakDuration:
                         _pomodoroLongBreakDurationMinutes.value, // Aggiunto
-                    initialGameBonusRatioStudy: _gameBonusRatioStudy.value, 
+                    initialGameBonusRatioStudy: _gameBonusRatioStudy.value,
                     onSettingsChanged:
-                        (workDur, shortBreakDur, longBreakDur, ratioStudy) { 
+                        (workDur, shortBreakDur, longBreakDur, ratioStudy) {
                       if (!mounted) return;
                       // setState(() { // Non necessario se i ValueNotifier aggiornano la UI
                         _pomodoroWorkDurationMinutes.value = workDur;
-                        _pomodoroShortBreakDurationMinutes.value = shortBreakDur; 
+                        _pomodoroShortBreakDurationMinutes.value = shortBreakDur;
                         _pomodoroLongBreakDurationMinutes.value = longBreakDur; // Aggiunto
-                        _gameBonusRatioStudy.value = ratioStudy; 
+                        _gameBonusRatioStudy.value = ratioStudy;
 
                         if (!_pomodoroRunningNotifier.value) {
                            // Aggiorna la durata della sessione corrente se non è in esecuzione
@@ -1225,8 +1245,8 @@ class _PomodoroPageState extends State<PomodoroPage> {
                     _getModeText(mode),
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           color: mode == PomodoroMode.work
-                              ? Colors.blueGrey 
-                              : Colors.teal,    
+                              ? Colors.blueGrey
+                              : Colors.teal,
                         ),
                   );
                 },
