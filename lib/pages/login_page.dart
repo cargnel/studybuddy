@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:studybuddy/config/google_secrets.dart';
 import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart' as AllPlatformsGoogleSignIn;
 
 class LoginPage extends StatefulWidget {
