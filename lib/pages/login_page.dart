@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:studybuddy/config/google_secrets.dart';
-import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart' as AllPlatformsGoogleSignIn;
+import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart' as all_platforms_google_sign_in;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -11,17 +11,17 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  late AllPlatformsGoogleSignIn.GoogleSignIn _googleSignIn;
+  late all_platforms_google_sign_in.GoogleSignIn _googleSignIn;
 
   @override
   void initState() {
     super.initState();
 
 
-    _googleSignIn = AllPlatformsGoogleSignIn.GoogleSignIn(
-      params: AllPlatformsGoogleSignIn.GoogleSignInParams(
-        clientId: GoogleSecrets.clientId,
-        clientSecret: GoogleSecrets.clientSecret,
+    _googleSignIn = all_platforms_google_sign_in.GoogleSignIn(
+      params: all_platforms_google_sign_in.GoogleSignInParams(
+        clientId: googleSignInClientId,
+        clientSecret: googleSignInClientSecret,
         redirectPort: 3000, // Must match the redirect URI in Google Cloud Console
         // You can also add scopes if needed, e.g.:
         // scopes: [
