@@ -5,18 +5,18 @@ class SettingsPage extends StatefulWidget {
   final String userId;
   final int initialPomodoroWorkDuration;
   final int initialPomodoroShortBreakDuration;
-  final int initialPomodoroLongBreakDuration; // <-- NUOVO PARAMETRO
+  final int initialPomodoroLongBreakDuration;
   final int initialGameBonusRatioStudy; 
 
   // Callback to notify HomePage of changes
-  final void Function(int workDuration, int shortBreakDuration, int longBreakDuration, int ratioStudy)? onSettingsChanged; // <-- AGGIORNATA FIRMA
+  final void Function(int workDuration, int shortBreakDuration, int longBreakDuration, int ratioStudy)? onSettingsChanged;
 
   const SettingsPage({
     super.key,
     required this.userId,
     required this.initialPomodoroWorkDuration,
     required this.initialPomodoroShortBreakDuration,
-    required this.initialPomodoroLongBreakDuration, // <-- NUOVO PARAMETRO
+    required this.initialPomodoroLongBreakDuration,
     required this.initialGameBonusRatioStudy,
     this.onSettingsChanged,
   });
@@ -28,7 +28,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late int _pomodoroWorkDuration;
   late int _pomodoroShortBreakDuration;
-  late int _pomodoroLongBreakDuration; // <-- NUOVA VARIABILE DI STATO
+  late int _pomodoroLongBreakDuration;
   late int _gameBonusRatioStudy;
 
   @override
@@ -36,7 +36,7 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _pomodoroWorkDuration = widget.initialPomodoroWorkDuration;
     _pomodoroShortBreakDuration = widget.initialPomodoroShortBreakDuration;
-    _pomodoroLongBreakDuration = widget.initialPomodoroLongBreakDuration; // <-- INIZIALIZZA
+    _pomodoroLongBreakDuration = widget.initialPomodoroLongBreakDuration;
     _gameBonusRatioStudy = widget.initialGameBonusRatioStudy;
   }
 
@@ -56,7 +56,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final Map<String, dynamic> settingsToSave = {
         'pomodoroWorkDurationMinutes': _pomodoroWorkDuration,
         'pomodoroShortBreakDurationMinutes': _pomodoroShortBreakDuration,
-        'pomodoroLongBreakDurationMinutes': _pomodoroLongBreakDuration, // <-- AGGIUNGI AL SALVATAGGIO
+        'pomodoroLongBreakDurationMinutes': _pomodoroLongBreakDuration,
         'gameBonusRatioStudy': _gameBonusRatioStudy,
       };
 
@@ -68,7 +68,7 @@ class _SettingsPageState extends State<SettingsPage> {
       widget.onSettingsChanged?.call(
         _pomodoroWorkDuration,
         _pomodoroShortBreakDuration,
-        _pomodoroLongBreakDuration, // <-- PASSA AL CALLBACK
+        _pomodoroLongBreakDuration,
         _gameBonusRatioStudy,
       );
 
@@ -102,9 +102,9 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             Slider(
               value: _pomodoroWorkDuration.toDouble(),
-              min: 20, 
-              max: 40,
-              divisions: (40 - 20), 
+              min: 5,
+              max: 60,
+              divisions: (60 - 5), // max - min
               label: _pomodoroWorkDuration.round().toString(),
               onChanged: (double value) {
                 setState(() {
@@ -120,9 +120,9 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             Slider(
               value: _pomodoroShortBreakDuration.toDouble(),
-              min: 5, 
+              min: 2,
               max: 30,
-              divisions: (30 - 5), 
+              divisions: (30 - 2), //max - min
               label: _pomodoroShortBreakDuration.round().toString(),
               onChanged: (double value) {
                 setState(() {
@@ -139,9 +139,9 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             Slider(
               value: _pomodoroLongBreakDuration.toDouble(),
-              min: 10, // Range 10-45 (esempio)
+              min: 2, // Range 10-45 (esempio)
               max: 45,
-              divisions: (45 - 10), 
+              divisions: (45 - 2), // max - min,
               label: _pomodoroLongBreakDuration.round().toString(),
               onChanged: (double value) {
                 setState(() {

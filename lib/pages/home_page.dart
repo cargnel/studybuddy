@@ -16,15 +16,6 @@ import 'package:audioplayers/audioplayers.dart'; // Added for beep sound
 // REMINDER: Add audioplayers: ^6.0.0 (or latest) to your pubspec.yaml
 // REMINDER: Add a beep sound file (e.g., assets/sounds/beep.mp3) to your assets and declare it in pubspec.yaml
 
-// Add this top-level function, typically after imports or before your _HomePageState class
-void _appOnDidReceiveLocalNotificationForIOS(
-    int id, String? title, String? body, String? payload) {
-  // This is the callback for iOS < 10 when a notification is received while the app is in the foreground.
-  // You can add logic here if needed, e.g., show a dialog or update app state.
-  // For now, it can be empty or have a debug print.
-  // debugPrint('iOS foreground notification ($id): $title - $body');
-}
-
 // Utility function to format duration
 String formatDuration(Duration duration, {bool showHours = false}) {
   String twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -569,8 +560,6 @@ class _HomePageState extends State<HomePage> {
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
-      onDidReceiveLocalNotification:
-      _appOnDidReceiveLocalNotificationForIOS, // Pass the top-level function here
     );
 
     final InitializationSettings initializationSettings = InitializationSettings(
