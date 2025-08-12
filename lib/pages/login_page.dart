@@ -16,6 +16,8 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
+
+
     _googleSignIn = AllPlatformsGoogleSignIn.GoogleSignIn(
       params: AllPlatformsGoogleSignIn.GoogleSignInParams(
         clientId: GoogleSecrets.clientId,
