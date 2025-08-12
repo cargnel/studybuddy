@@ -12,7 +12,7 @@ TODO: se non ho completato la sessione di lavoro e faccio STOP, mi propone di ri
 TODO: offline mode
 
 
-DONE: i documenti su db devono avere id aaaaMMddThhmmss_tipodoc
-DONE: ora i pomodori hanno stop che avvia subito la sessione successiva di pausa/lavoro...ma non si capisce dai log come li conta
-DONE: suoni di notifica
-DONE: notifiche toast su windows funziona con threshold preimpostati a 15, 10 e 5 min
+DONE: [2024-06-09 16:00] i documenti su db devono avere id aaaaMMddThhmmss_tipodoc
+DONE: [2024-06-09 16:00] ora i pomodori hanno stop che avvia subito la sessione successiva di pausa/lavoro...ma non si capisce dai log come li conta
+DONE: [2024-06-09 16:00] suoni di notifica
+DONE: [2024-06-09 16:00] notifiche toast su windows funziona con threshold preimpostati a 15, 10 e 5 min

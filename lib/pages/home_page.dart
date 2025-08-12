@@ -1,6 +1,3 @@
-
-
-// MARKER: THIS FILE SHOULD BE UPDATED BY THE ASSISTANT - V4
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,6 +9,8 @@ import '../services/timer_service.dart';
 import 'settings_page.dart';
 import 'login_page.dart';
 import 'package:audioplayers/audioplayers.dart'; // Added for beep sound
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 // REMINDER: Add audioplayers: ^6.0.0 (or latest) to your pubspec.yaml
 // REMINDER: Add a beep sound file (e.g., assets/sounds/beep.mp3) to your assets and declare it in pubspec.yaml
@@ -68,6 +67,7 @@ class _HomePageState extends State<HomePage> {
       ValueNotifier(2);
   final ValueNotifier<int> _currentMalusPlaytimeMinutes =
       ValueNotifier(0);
+  final ValueNotifier<int> _workSessionsBeforeLongBreak = ValueNotifier(3); // Ora configurabile
 
   DateTime? _pomodoroSessionStartTime;
   Timer? _pomodoroDartTimer;
@@ -76,7 +76,6 @@ class _HomePageState extends State<HomePage> {
   PomodoroMode _pomodoroCurrentMode = PomodoroMode.work;
   final ValueNotifier<PomodoroMode> _pomodoroCurrentModeNotifier = ValueNotifier(PomodoroMode.work); // Per la UI
   int _completedWorkSessions = 0;
-  final int _workSessionsBeforeLongBreak = 3; // Mantieni o rendi configurabile in settings
 
   // Game Timer State
   final ValueNotifier<Duration> _gameTimeElapsedNotifier =
@@ -125,7 +124,9 @@ class _HomePageState extends State<HomePage> {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
   FlutterLocalNotificationsPlugin();
   // Aggiungi un set per tenere traccia delle soglie notificate per la sessione di lavoro corrente
-  Set<int> _notifiedWorkSessionThresholds = {};
+  final Set<int> _notifiedWorkSessionThresholds = {};
+  List<int> _notificationThresholds = [15, 10, 5]; // Default in minutes
+  bool _notificationsInitialized = false; // Add this to your _HomePageState
   @override
   void initState() {
     super.initState();
@@ -150,6 +151,7 @@ class _HomePageState extends State<HomePage> {
     _pomodoroCurrentModeNotifier.dispose(); // Aggiunto dispose
     _gameBonusRatioStudy.dispose();
     _currentMalusPlaytimeMinutes.dispose();
+    _workSessionsBeforeLongBreak.dispose();
     _gameTimeElapsedNotifier.dispose();
     _gameRunningNotifier.dispose();
     _gamePausedNotifier.dispose();
@@ -188,6 +190,7 @@ class _HomePageState extends State<HomePage> {
       _pomodoroLongBreakDurationMinutes.value = 15;
       _gameBonusRatioStudy.value = 2;
       _currentMalusPlaytimeMinutes.value = 0;
+      _workSessionsBeforeLongBreak.value = 3;
 
       if (!_pomodoroRunningNotifier.value) {
         _pomodoroCurrentMode = PomodoroMode.work;
@@ -213,6 +216,7 @@ class _HomePageState extends State<HomePage> {
       int longBreakMinutes = 15;
       int gameBonus = 2;
       int currentMalus = 0;
+      int workSessionsBeforeLongBreak = 3;
 
       Map<String, dynamic> settingsToSave = {};
       bool saveSettingsNeeded = false;
@@ -250,6 +254,12 @@ class _HomePageState extends State<HomePage> {
           if (settings['gameBonusRatioStudy'] == null) {
             settingsToSave['gameBonusRatioStudy'] = gameBonus;
             saveSettingsNeeded = true;
+          }
+          if (settings['notificationThresholds'] != null) {
+            _notificationThresholds = List<int>.from(settings['notificationThresholds']);
+          }
+          if (settings['workSessionsBeforeLongBreak'] != null) {
+            workSessionsBeforeLongBreak = settings['workSessionsBeforeLongBreak'] as int;
           }
         } else {
           settingsToSave = {
@@ -307,6 +317,7 @@ class _HomePageState extends State<HomePage> {
       _pomodoroLongBreakDurationMinutes.value = longBreakMinutes;
       _gameBonusRatioStudy.value = gameBonus;
       _currentMalusPlaytimeMinutes.value = currentMalus;
+      _workSessionsBeforeLongBreak.value = workSessionsBeforeLongBreak;
 
       if (!_pomodoroRunningNotifier.value) {
         // _pomodoroCurrentMode e _completedWorkSessions sono caricati da _loadInitialTimerStates
@@ -327,6 +338,7 @@ class _HomePageState extends State<HomePage> {
       _pomodoroLongBreakDurationMinutes.value = 15;
       _gameBonusRatioStudy.value = 2;
       _currentMalusPlaytimeMinutes.value = 0;
+      _workSessionsBeforeLongBreak.value = 3;
 
       if (!_pomodoroRunningNotifier.value) {
         _pomodoroCurrentMode = PomodoroMode.work;
@@ -552,6 +564,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initializeNotifications() async {
+    if (_notificationsInitialized) return;
+    _notificationsInitialized = true;
+
     const AndroidInitializationSettings initializationSettingsAndroid =
     AndroidInitializationSettings('app_icon');
 
@@ -562,9 +577,17 @@ class _HomePageState extends State<HomePage> {
       requestSoundPermission: true,
     );
 
+    final WindowsInitializationSettings initializationSettingsWindows =
+        WindowsInitializationSettings(
+          appName: 'StudyBuddy',
+          appUserModelId: 'com.missich.studybuddy',
+          guid: '895f4951-5aa8-4f64-a1c0-1bb9f3a050bd',
+        );
+
     final InitializationSettings initializationSettings = InitializationSettings(
       android: initializationSettingsAndroid,
       iOS: initializationSettingsIOS,
+      windows: initializationSettingsWindows,
     );
 
     await flutterLocalNotificationsPlugin.initialize(
@@ -580,30 +603,44 @@ class _HomePageState extends State<HomePage> {
     );
 
     // Richiedi permessi su Android 13+
-    if (Theme.of(context).platform == TargetPlatform.android) { // Assicurati che 'Theme.of(context)' sia accessibile qui
+    final TargetPlatform platform = Theme.of(context).platform; // <--- Spostato PRIMA di qualsiasi async/await
+    bool showDeniedSnackBar = false;
+    // --- async gap starts here ---
+    if (platform == TargetPlatform.android) {
       final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
-      flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+          flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
       final bool? granted = await androidImplementation?.requestNotificationsPermission();
-      if(!granted!){
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Notifications permission denied')));
+      if (!mounted) return;
+      if (!granted!) {
+        showDeniedSnackBar = true;
       }
-      // Puoi controllare 'granted' se necessario
     }
-
-    // Richiedi permessi su iOS (già fatto in initializationSettingsIOS ma puoi essere più esplicito)
-    // Nota: su iOS >= 10, la richiesta di permessi e la gestione delle notifiche in foreground
-    // sono gestite diversamente (spesso in AppDelegate). La callback onDidReceiveLocalNotification
-    // è specificamente per iOS < 10 foreground.
-    if (Theme.of(context).platform == TargetPlatform.iOS) { // Assicurati che 'Theme.of(context)' sia accessibile qui
-      await flutterLocalNotificationsPlugin
+    if (platform == TargetPlatform.iOS) {
+      final iosPlugin = flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(
+              IOSFlutterLocalNotificationsPlugin>();
+      final bool? granted = await iosPlugin?.requestPermissions(
         alert: true,
         badge: true,
         sound: true,
+      );
+      if (!mounted) return;
+      if (!granted!) {
+        showDeniedSnackBar = true;
+      }
+    }
+    // Only use context after async gap if (showDeniedSnackBar && mounted)
+    // The 'mounted' check here is correct, as context is only safe to use if the widget is still mounted after the async gap.
+    // However, if you want to be stricter, you can move the 'mounted' check immediately after each await, and only use context if mounted is true.
+    // In this case, since 'showDeniedSnackBar' is only set after the awaits, the check is appropriate.
+    // If you want to avoid using context guarded by an unrelated 'mounted' check, you can refactor as follows:
+    if (!mounted) return;
+    if (showDeniedSnackBar) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Notification permissions denied.'),
+        ),
       );
     }
   }
@@ -664,9 +701,13 @@ class _HomePageState extends State<HomePage> {
 
     if (mounted && !fromLoad) {
       String message = "";
-      if (mode == PomodoroMode.work) message = "Work session started!";
-      else if (mode == PomodoroMode.shortBreak) message = "Time for a short break!";
-      else if (mode == PomodoroMode.longBreak) message = "Time for a long break!";
+      if (mode == PomodoroMode.work) {
+        message = "Work session started!";
+      } else if (mode == PomodoroMode.shortBreak) {
+        message = "Time for a short break!";
+      } else if (mode == PomodoroMode.longBreak) {
+        message = "Time for a long break!";
+      }
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
   }
@@ -682,8 +723,8 @@ class _HomePageState extends State<HomePage> {
       if (_pomodoroCurrentMode == PomodoroMode.work) {
         int currentTimeSeconds = _pomodoroTimeNotifier.value.inSeconds;
 
-        // Soglie in secondi (15 min = 900s, 10 min = 600s, 5 min = 300s)
-        List<int> thresholds = [900, 600, 300];
+        // Usa le soglie definite dall'utente (in secondi)
+        List<int> thresholds = _notificationThresholds.map((m) => m * 60).toList();
 
         for (int threshold in thresholds) {
           if (currentTimeSeconds == threshold && !_notifiedWorkSessionThresholds.contains(threshold)) {
@@ -700,7 +741,59 @@ class _HomePageState extends State<HomePage> {
       // Play beep sound every minute
       if (_pomodoroTimeNotifier.value.inSeconds % 60 == 0 &&
           _pomodoroTimeNotifier.value.inSeconds > 0) { // Avoid beep at 00:00
-        _audioPlayer.play(AssetSource('sounds/beep.mp3')); // REMINDER: Ensure 'assets/sounds/beep.mp3' exists
+        try {
+          String beepAsset = 'sounds/beep.wav';
+          if (!kIsWeb && Platform.isWindows) {
+            beepAsset = 'sounds/beep.mp3';
+          }
+          _audioPlayer.play(AssetSource(beepAsset)).catchError((e) {
+            debugPrint('Audio play error: Asset: $beepAsset\nError: $e');
+            if (kIsWeb) {
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Audio Permission Required'),
+                    content: const Text(
+                      'To play sounds, please allow audio playback in your browser.\n\n'
+                      'If you see a blocked icon in the browser address bar, click it and allow audio.\n\n'
+                      'After granting permission, try again.'
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('OK'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            }
+          });
+        } catch (e) {
+          debugPrint('Audio play exception: $e');
+          if (kIsWeb) {
+            if (mounted) {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Audio Permission Required'),
+                  content: const Text(
+                    'To play sounds, please allow audio playback in your browser.\n\n'
+                    'If you see a blocked icon in the browser address bar, click it and allow audio.\n\n'
+                    'After granting permission, try again.'
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+        }
       }
 
       _saveCurrentTimerStates();
@@ -722,7 +815,7 @@ class _HomePageState extends State<HomePage> {
         if (_currentMalusPlaytimeMinutes.value > 0) {
           // ... (logica riduzione malus) ...
         }
-        if (_completedWorkSessions >= _workSessionsBeforeLongBreak) {
+        if (_completedWorkSessions >= _workSessionsBeforeLongBreak.value) {
           nextMode = PomodoroMode.longBreak;
         } else {
           nextMode = PomodoroMode.shortBreak;
@@ -1015,23 +1108,20 @@ class _HomePageState extends State<HomePage> {
                     initialPomodoroLongBreakDuration:
                         _pomodoroLongBreakDurationMinutes.value, // Aggiunto
                     initialGameBonusRatioStudy: _gameBonusRatioStudy.value,
+                    initialNotificationThresholds: _notificationThresholds, // Passa le soglie
+                    initialWorkSessionsBeforeLongBreak: _workSessionsBeforeLongBreak.value,
                     onSettingsChanged:
                         (workDur, shortBreakDur, longBreakDur, ratioStudy) {
                       if (!mounted) return;
-                      // setState(() { // Non necessario se i ValueNotifier aggiornano la UI
-                        _pomodoroWorkDurationMinutes.value = workDur;
-                        _pomodoroShortBreakDurationMinutes.value = shortBreakDur;
-                        _pomodoroLongBreakDurationMinutes.value = longBreakDur; // Aggiunto
-                        _gameBonusRatioStudy.value = ratioStudy;
-
-                        if (!_pomodoroRunningNotifier.value) {
-                           // Aggiorna la durata della sessione corrente se non è in esecuzione
-                           // basandosi sulla modalità Pomodoro corrente.
-                          _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
-                          _pomodoroTimeNotifier.value =
-                              Duration(seconds: _pomodoroSessionSeconds.value);
-                        }
-                      // });
+                      _pomodoroWorkDurationMinutes.value = workDur;
+                      _pomodoroShortBreakDurationMinutes.value = shortBreakDur;
+                      _pomodoroLongBreakDurationMinutes.value = longBreakDur;
+                      _gameBonusRatioStudy.value = ratioStudy;
+                      if (!_pomodoroRunningNotifier.value) {
+                        _pomodoroSessionSeconds.value = _getDurationSecondsForMode(_pomodoroCurrentMode);
+                        _pomodoroTimeNotifier.value =
+                            Duration(seconds: _pomodoroSessionSeconds.value);
+                      }
                     },
                   ),
                 ),

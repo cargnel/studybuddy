@@ -7,6 +7,8 @@ class SettingsPage extends StatefulWidget {
   final int initialPomodoroShortBreakDuration;
   final int initialPomodoroLongBreakDuration;
   final int initialGameBonusRatioStudy; 
+  final List<int> initialNotificationThresholds; // <-- Aggiunto parametro
+  final int initialWorkSessionsBeforeLongBreak;
 
   // Callback to notify HomePage of changes
   final void Function(int workDuration, int shortBreakDuration, int longBreakDuration, int ratioStudy)? onSettingsChanged;
@@ -18,6 +20,8 @@ class SettingsPage extends StatefulWidget {
     required this.initialPomodoroShortBreakDuration,
     required this.initialPomodoroLongBreakDuration,
     required this.initialGameBonusRatioStudy,
+    required this.initialNotificationThresholds, // <-- Aggiunto parametro
+    required this.initialWorkSessionsBeforeLongBreak,
     this.onSettingsChanged,
   });
 
@@ -30,6 +34,9 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _pomodoroShortBreakDuration;
   late int _pomodoroLongBreakDuration;
   late int _gameBonusRatioStudy;
+  late List<int> _notificationThresholds;
+  late TextEditingController _notificationThresholdsController;
+  late int _workSessionsBeforeLongBreak;
 
   @override
   void initState() {
@@ -38,6 +45,15 @@ class _SettingsPageState extends State<SettingsPage> {
     _pomodoroShortBreakDuration = widget.initialPomodoroShortBreakDuration;
     _pomodoroLongBreakDuration = widget.initialPomodoroLongBreakDuration;
     _gameBonusRatioStudy = widget.initialGameBonusRatioStudy;
+    _notificationThresholds = List<int>.from(widget.initialNotificationThresholds);
+    _notificationThresholdsController = TextEditingController(text: _notificationThresholds.join(","));
+    _workSessionsBeforeLongBreak = widget.initialWorkSessionsBeforeLongBreak;
+  }
+
+  @override
+  void dispose() {
+    _notificationThresholdsController.dispose();
+    super.dispose();
   }
 
   Future<void> _saveSettings() async {
@@ -58,6 +74,8 @@ class _SettingsPageState extends State<SettingsPage> {
         'pomodoroShortBreakDurationMinutes': _pomodoroShortBreakDuration,
         'pomodoroLongBreakDurationMinutes': _pomodoroLongBreakDuration,
         'gameBonusRatioStudy': _gameBonusRatioStudy,
+        'notificationThresholds': _notificationThresholds,
+        'workSessionsBeforeLongBreak': _workSessionsBeforeLongBreak,
       };
 
       await userDocRef.set(
@@ -169,6 +187,41 @@ class _SettingsPageState extends State<SettingsPage> {
               onChanged: (double value) {
                 setState(() {
                   _gameBonusRatioStudy = value.round();
+                });
+              },
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Notifiche - Soglie di avviso (minuti, separati da virgola):',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            TextField(
+              controller: _notificationThresholdsController,
+              keyboardType: TextInputType.text,
+              decoration: const InputDecoration(
+                hintText: 'Esempio: 15,10,5',
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _notificationThresholds = value.split(',').map((e) => int.tryParse(e.trim()) ?? 0).where((e) => e > 0).toList();
+                });
+              },
+            ),
+            const SizedBox(height: 24),
+
+            Text(
+              'Sessioni di lavoro prima della pausa lunga: $_workSessionsBeforeLongBreak',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            Slider(
+              value: _workSessionsBeforeLongBreak.toDouble(),
+              min: 2,
+              max: 8,
+              divisions: 6,
+              label: _workSessionsBeforeLongBreak.round().toString(),
+              onChanged: (double value) {
+                setState(() {
+                  _workSessionsBeforeLongBreak = value.round();
                 });
               },
             ),
